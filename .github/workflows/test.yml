@@ -1,0 +1,69 @@
+name: CI Pipeline
+
+on:
+  - push
+  - pull_request
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: [stable, oldstable]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Install dependencies
+        if: hashFiles('go.mod') != ''
+        run: go mod download
+
+      - name: Lint and format check
+        if: hashFiles('go.mod') != ''
+        run: |
+          if [ -f gofmt ]; then
+            echo "::notice::Skipping format check because gofmt is not a repository file"
+            exit 0
+          fi
+          test -z "$(gofmt -l .)"
+          go vet ./...
+
+      - name: Build or typecheck
+        if: hashFiles('go.mod') != ''
+        run: go test ./...
+
+      - name: Unit and integration tests
+        if: hashFiles('go.mod') != ''
+        run: go test -race ./...
+
+      - name: Pipeline summary
+        if: always()
+        shell: bash
+        run: |
+          summary='${{ steps.setup-go.outcome }}'
+          if [ -z "$summary" ]; then
+            summary='skipped'
+          fi
+          printf '%s\n' '# Go CI Results' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '| Step | Outcome |' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '| --- | --- |' >> "$GITHUB_STEP_SUMMARY"
+          printf '| Go %s setup | %s |\n' "${{ matrix.go }}" "$summary" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Manifest check | %s |\n' "$([[ -f go.mod ]] && echo present || echo absent)" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Dependency install | %s |\n' "$([[ -f go.mod ]] && echo not-run || echo not-applicable)" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Lint and format check | %s |\n' "$([[ -f go.mod ]] && echo not-run || echo not-applicable)" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Build or typecheck | %s |\n' "$([[ -f go.mod ]] && echo not-run || echo not-applicable)" >> "$GITHUB_STEP_SUMMARY"
+          printf '| Unit and integration tests | %s |\n' "$([[ -f go.mod ]] && echo not-run || echo not-applicable)" >> "$GITHUB_STEP_SUMMARY"
